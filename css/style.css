@@ -609,7 +609,7 @@ label.valid {
 /* Success message style */
 .label.success {
     display: block;
-    width: 100%;
+    width: auto;
     padding: 10px;
     margin-bottom: 20px;
     background-color: #d4edda;
