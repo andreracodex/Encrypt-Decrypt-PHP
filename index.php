@@ -1,211 +1,98 @@
 <?php
-// Function to generate ECC key pair
-function generateECCKeyPair() {
-    // For simplicity, we'll use a small prime number
-    $p = 23; // A small prime number
-    $a = 1; // Curve parameter a
-    $b = 1; // Curve parameter b
-    $G = [5, 1]; // Generator point on the curve
 
-    // Generate private key
-    $privateKey = random_int(1, $p - 1);
-    
-    // Calculate public key: publicKey = privateKey * G
-    $publicKey = eccMultiply($G, $privateKey, $a, $p);
+session_start();
+include 'db.php';
 
-    return [$privateKey, $publicKey];
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
 }
 
-// Function to perform point multiplication on an elliptic curve
-function eccMultiply($point, $scalar, $a, $p) {
-    $result = [0, 0];
-    $addend = $point;
 
-    while ($scalar) {
-        if ($scalar & 1) {
-            $result = eccAdd($result, $addend, $a, $p);
-        }
-        $addend = eccAdd($addend, $addend, $a, $p);
-        $scalar >>= 1;
-    }
-
-    return $result;
-}
-
-// Function to perform point addition on an elliptic curve
-function eccAdd($P, $Q, $a, $p) {
-    if ($P == [0, 0]) return $Q;
-    if ($Q == [0, 0]) return $P;
-
-    if ($P[0] == $Q[0] && $P[1] == -$Q[1]) return [0, 0];
-
-    if ($P == $Q) {
-        $m = (3 * $P[0] * $P[0] + $a) * inverse(2 * $P[1], $p) % $p;
-    } else {
-        $m = ($Q[1] - $P[1]) * inverse($Q[0] - $P[0], $p) % $p;
-    }
-
-    $x3 = ($m * $m - $P[0] - $Q[0]) % $p;
-    $y3 = ($m * ($P[0] - $x3) - $P[1]) % $p;
-
-    return [$x3, $y3];
-}
-
-// Function to find modular inverse
-function inverse($k, $p) {
-    return pow($k, $p - 2, $p);
-}
-
-// Function to XOR encrypt the data with a key
-function xorEncrypt($data, $key) {
-    $keyLength = strlen($key);
-    $output = '';
-    for ($i = 0, $j = 0; $i < strlen($data); $i++, $j = ($j + 1) % $keyLength) {
-        $output .= $data[$i] ^ $key[$j];
-    }
-    return $output;
-}
-
-// Function to XOR decrypt the data with a key (same as encrypt)
-function xorDecrypt($data, $key) {
-    return xorEncrypt($data, $key);
-}
-
-// Function to encrypt the file using XOR with the shared secret
-function encryptFile($filePath, $sharedSecret, $outputFilePath) {
-    $fileContents = file_get_contents($filePath);
-    if ($fileContents === false) {
-        return false;
-    }
-    $encryptedData = xorEncrypt($fileContents, $sharedSecret);
-    if (file_put_contents($outputFilePath, $encryptedData) === false) {
-        return false;
-    }
-    return true;
-}
-
-// Function to decrypt the file using XOR with the shared secret
-function decryptFile($encryptedFilePath, $sharedSecret, $outputFilePath) {
-    $encryptedData = file_get_contents($encryptedFilePath);
-    if ($encryptedData === false) {
-        return false;
-    }
-    $decryptedData = xorDecrypt($encryptedData, $sharedSecret);
-    if (file_put_contents($outputFilePath, $decryptedData) === false) {
-        return false;
-    }
-    return true;
-}
-
-// Assuming key exchange is already done and we have the shared secret
-if(isset($_POST['enckey'])){
-    $sharedSecret = $_POST['enckey'];
-}elseif(isset($_POST['deckey'])){
-    $sharedSecret = $_POST['deckey'];
-}else{
-    $sharedSecret = '12345';
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $file = $_FILES['file'];
-
-    if (isset($_FILES['file'])) {
-        $filePath = $file['tmp_name'];
-        $action = $_POST['action'];
-
-        $path_parts = pathinfo($_FILES["file"]["name"]);
-        $filename = $_FILES["file"]["name"];
-        $extension = $path_parts['extension'];
-
-        if ($action === 'encrypt') {
-            $name = preg_replace('/\.\w+$/', '', $file['name']);
-            $fileExtension = '.nathan';
-            $outputFilePath = 'encrypt/' .$name.'.'.$extension.$fileExtension;
-            $encryptionResult = encryptFile($filePath, $sharedSecret, $outputFilePath);
-
-            // save original file
-            $target = 'encrypt/original/'.$filename;
-            move_uploaded_file($_FILES['file']['tmp_name'], $target);
-
-            if ($encryptionResult === false) {
-                $message = "Error encrypting file or writing encrypted data to file.";
-            } else {
-                $message = "File encrypted successfully! <a href='$outputFilePath' class='alert-link'>Download encrypted file</a>";
-            }
-
-        } elseif ($action === 'decrypt') {
-            $newFilename = str_replace('.'.$extension, '', $filename);
-            $outputFilePath = 'decrypt/'. $newFilename;
-            $decryptionResult = decryptFile($filePath, $sharedSecret, $outputFilePath);
-
-            if ($decryptionResult === false) {
-                $message = "Error decrypting file or writing decrypted data to file.";
-            } else {
-                $message = "File decrypted successfully! <a href='$outputFilePath' class='alert-link'>Download decrypted file</a>";
-            }
-        }
-    } else {
-        $message = "Please provide a file.";
-    }
-}
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-    <title>Encrypt and Decrypt (ECC)</title>
+    <title>Disk Crypt</title>
     <link href="css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <link href="css/styledash.css" rel="stylesheet">
 </head>
-<body>
-    <div class="container mt-5">
-        <h1 class="mb-4">Encrypt and Decrypt (ECC)</h1>
-        <?php if (isset($message)): ?>
-            <div class="alert alert-info" role="alert">
-                <?= $message ?>
-            </div>
-        <?php endif; ?>
-        <div class="card mb-4">
-            <div class="card-header">
-                Encrypt Files
-            </div>
-            <div class="card-body">
-                <form method="post" action="index.php" enctype="multipart/form-data">
-                    <input type="hidden" name="action" value="encrypt">
-                    <div class="mb-3">
-                        <label for="file" class="form-label">Encrypt Key :</label>
-                        <input type="text" id="enckey" name="enckey" class="form-control" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="file" class="form-label">File Upload:</label>
-                        <input type="file" id="file" name="file" class="form-control" required>
-                    </div>
-                    <button type="submit" class="btn btn-primary">Encrypt</button>
-                </form>
-            </div>
-        </div>
 
-        <div class="card">
-            <div class="card-header">
-                Decrypt Files
-            </div>
-            <div class="card-body">
-                <form method="post" action="index.php" enctype="multipart/form-data">
-                    <input type="hidden" name="action" value="decrypt">
-                    <div class="mb-3">
-                        <label for="file" class="form-label">Decrypt Key :</label>
-                        <input type="text" id="deckey" name="deckey" class="form-control" required>
+<body>
+    <div class="wrapper">
+        <!-- Sidebar -->
+        <?php include 'sidebar.php' ?>
+
+        <!-- Page Content -->
+        <div id="content">
+            <div class="container mt-5">
+                <h1 class="mb-4">Welcome To Disk Crypt</h1>
+                <hr>
+                <h2>Elliptic Curve Cryptography (ECC)</h2>
+                <p>
+                    ECC adalah teknik enkripsi kunci publik yang modern dan terkenal karena ukurannya yang lebih kecil, kecepatannya yang lebih tinggi, dan efisiensinya dibandingkan dengan metode kriptografi lainnya. Mari kita bahas lebih lanjut:
+                </p>
+
+                <h2>Struktur Kurva Elips</h2>
+                <p>
+                    ECC berdasarkan struktur aljabar dari kurva elips di atas bidang terbatas. Kurva elips ini memungkinkan penggunaan kunci lebih kecil untuk mencapai tingkat keamanan yang setara dengan sistem kriptografi lain yang menggunakan eksponensiasi modular di bidang Galois, seperti RSA dan ElGamal.
+                </p>
+
+                <h2>Penggunaan ECC</h2>
+                <p>
+                    ECC digunakan untuk berbagai fungsi kriptografi, termasuk:
+                </p>
+                <ul>
+                    <li>Key agreement: ECC memungkinkan dua pihak untuk setuju pada kunci bersama tanpa mengungkapkan kunci sebenarnya.</li>
+                    <li>Digital signatures: ECC digunakan untuk menghasilkan tanda tangan digital yang otentik dan aman.</li>
+                    <li>Pseudo-random generators: ECC dapat menghasilkan deret angka acak yang berguna dalam kriptografi.</li>
+                    <li>Enkripsi: Meskipun ECC tidak secara langsung digunakan untuk enkripsi, namun bisa dikombinasikan dengan skema enkripsi simetris untuk tujuan ini.</li>
+                </ul>
+
+                <h2>Sejarah</h2>
+                <p>
+                    Penggunaan kurva elips dalam kriptografi diusulkan secara independen oleh Neal Koblitz dan Victor S. Miller pada tahun 1985. Algoritma ECC mulai digunakan secara luas pada tahun 2004 hingga 2005. NIST merekomendasikan lima belas kurva elips pada tahun 1999, termasuk kurva-kurva dengan bidang terbatas dan biner. NSA mengumumkan Suite B pada RSA Conference 2005, yang secara eksklusif menggunakan ECC untuk pembuatan tanda tangan digital dan pertukaran kunci. ECC digunakan dalam protokol populer seperti Transport Layer Security (TLS) dan Bitcoin.
+                </p>
+                <hr>
+                <h2>Advanced Encryption Standard (AES)</h2>
+                <p>
+                    Advanced Encryption Standard (AES), juga dikenal dengan nama Rijndael, adalah algoritma enkripsi blok simetris yang telah menjadi standar industri untuk kriptografi kunci simetris. Pada tahun 2001, AES dipilih oleh National Institute of Standards and Technology (NIST) Amerika Serikat sebagai pengganti Data Encryption Standard (DES) yang lebih tua.
+                </p>
+
+                <h2>Struktur dan Operasi</h2>
+                <p>
+                    AES beroperasi dengan ukuran blok 128 bit dan menggunakan kunci simetris dengan panjang 128, 160, 192, 224, atau 256 bit. Algoritma ini bekerja pada blok data dengan menggantikan dan mempermutasi byte-byte data. AES menggunakan substitusi S-box dan transformasi ShiftRows, serta MixColumns untuk mengacak data.
+                </p>
+
+                <h2>Keamanan dan Efisiensi</h2>
+                <p>
+                    AES dianggap sebagai salah satu protokol enkripsi terbaik karena menggabungkan kecepatan dan keamanan dengan baik. Algoritma ini telah digunakan secara luas dalam berbagai aplikasi, termasuk keamanan nirkabel dan komputasi awan.
+                </p>
+
+                <h2>Penggunaan</h2>
+                <p>
+                    AES digunakan dalam berbagai protokol dan aplikasi, termasuk Transport Layer Security (TLS) untuk mengamankan komunikasi web dan diskusi Bitcoin. Keberhasilan AES terletak pada desainnya yang kuat dan efisien.
+                </p>
+                <?php if (isset($_SESSION['message'])) : ?>
+                    <div class="label <?php echo $_SESSION['message_type'] === 'success' ? 'success' : 'eror'; ?>" role="alert">
+                        <?= $_SESSION['message'] ?>
                     </div>
-                    <div class="mb-3">
-                        <label for="file" class="form-label">File Upload:</label>
-                        <input type="file" id="file" name="file" class="form-control" required>
-                    </div>
-                    <button type="submit" class="btn btn-primary">Decrypt</button>
-                </form>
+                    <?php unset($_SESSION['message']); ?>
+                    <?php unset($_SESSION['message_type']); ?>
+                <?php endif; ?>
+                <!-- Your existing forms for encryption and decryption... -->
             </div>
         </div>
     </div>
-    <script src="js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
+    <script src="js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.10.2/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
 </body>
+
 </html>
