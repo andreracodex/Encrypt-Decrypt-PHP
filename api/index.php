@@ -91,20 +91,60 @@ function eccAdd($P, $Q, $a, $p) {
     return [gmp_strval($x3), gmp_strval($y3)];
 }
 
-
-function processFile($filePath, $sharedSecret, $outputFilePath, $isEncrypt = true) {
+function processFile($filePath, $sharedSecret, $outputFilePath, $isEncrypt = false) {
     $fileContents = file_get_contents($filePath);
     if ($fileContents === false) {
         return false;
     }
 
-    $processedData = eccEncryptDecrypt($fileContents, $sharedSecret);
+    $processedData = eccEncryptDecrypt($fileContents, $sharedSecret, $isEncrypt);
     return file_put_contents($outputFilePath, $processedData) !== false;
 }
 
+function processFilePure($fileContents, $sharedSecret, $outputFilePath, $isEncrypt = false) {
+    $fileContents = file_get_contents($fileContents);
+    
+    $processedData = eccEncryptDecrypt($fileContents, $sharedSecret, $isEncrypt);
+
+    return file_put_contents($outputFilePath, $processedData) !== false;
+}
 
 // Function to handle encryption/decryption endpoints
 function handleEndpoint($inputData, $inputType, $sharedSecret, $uniqueId, $conn, $isEncrypt = true) {
+    // Extract Bearer token from the Authorization header
+    $headers = apache_request_headers();
+    if (!isset($headers['Authorization'])) {
+        http_response_code(401);
+        return ['success' => false, 'message' => 'Authorization header is missing.'];
+    }
+
+    $authHeader = $headers['Authorization'];
+    if (strpos($authHeader, 'Bearer ') !== 0) {
+        http_response_code(401);
+        return ['success' => false, 'message' => 'Invalid authorization header format.'];
+    }
+
+    // Validate the token (example: check against a predefined token)
+    // This could also involve querying the database to validate the token
+    $validToken = getBearerToken(); // Replace with your token validation logic
+    $cekToken = $conn->prepare("SELECT * FROM sess WHERE token = ?");
+    $cekToken->bind_param("s", $validToken);
+    $cekToken->execute();
+    $result = $cekToken->get_result();
+
+    if ($result->num_rows > 0) {
+        $validToken2 = $result->fetch_assoc();
+        $validTokens = $validToken2['token'];    
+    } else {
+        return ['success' => false, 'message' => 'No Session Found.'];
+    }
+    // var_dump($validToken, $validTokens);
+    if ($validToken !== $validTokens) {
+        http_response_code(403);
+        return ['success' => false, 'message' => 'Invalid token.'];
+    }
+
+    // Proceed with the main operations
     if (empty($uniqueId)) {
         http_response_code(400);
         return ['success' => false, 'message' => 'Unique ID is required.'];
@@ -113,14 +153,21 @@ function handleEndpoint($inputData, $inputType, $sharedSecret, $uniqueId, $conn,
     $fileExtension = '.nathan';
     $outputFilePath = '';
     $resultData = '';
+    $token = $_POST['token'] ?? '';
 
     if ($inputType === 'file') {
         $filename = $_FILES["file"]["name"];
-        $outputFilePath = ($isEncrypt ? 'encrypt/'. $filename . $fileExtension : 'decrypt/'. preg_replace('/\.\w+$/', '', $filename)) ;
+        $filename = str_replace(' ', '', $filename); // Remove spaces
+        // Optionally, you can also remove other blank characters like tabs and newlines
+        $filename = preg_replace('/\s+/', '', $filename);
+        $outputFilePath = ($isEncrypt ? 'encrypt/' . $filename . $fileExtension : 'decrypt/' . preg_replace('/\.\w+$/', '', $filename));
 
         $processResult = processFile($inputData, $sharedSecret, $outputFilePath, $isEncrypt);
         if (!$processResult) {
-            return ['success' => false, 'message' => 'Error processing file.'];
+            return [
+                'success' => false, 
+                'message' => 'Error processing file.',
+            ];
         }
     } elseif ($inputType === 'text') {
         $filename = 'Text';
@@ -136,8 +183,8 @@ function handleEndpoint($inputData, $inputType, $sharedSecret, $uniqueId, $conn,
 
     if ($isEncrypt) {
         $uuid = generateUuid();
-        $sql = "INSERT INTO xfiles (action, file_name, output_file_path, shared_secret, unique_id, uuid, values_data, type_file) 
-                VALUES ('encrypt', '$filename', '$outputFilePath', '$sharedSecret', '$uniqueId', '$uuid', '$resultData', '$inputType')";
+        $sql = "INSERT INTO xfiles (action, file_name, output_file_path, shared_secret, unique_id, uuid, values_data, type_file, token) 
+                VALUES ('encrypt', '$filename', '$outputFilePath', '$sharedSecret', '$uniqueId', '$uuid', '$resultData', '$inputType', '$token')";
         $conn->query($sql);
     } else {
         $sql = "SELECT * FROM xfiles WHERE unique_id = '$uniqueId'";
@@ -154,10 +201,41 @@ function handleEndpoint($inputData, $inputType, $sharedSecret, $uniqueId, $conn,
 
     return [
         'success' => true,
-        'message' => 'Data ' . ($isEncrypt ? 'encrypted' : 'decrypted') . ' successfully!',
+        'message' => 'Data ' . urlencode($isEncrypt ? 'encrypted' : 'decrypted') . ' successfully!',
         'output' => $outputFilePath,
-        'result' => $resultData
+        'text' => $resultData ?? '',
+        'file' => 'https://encrypt-decrypt.test/api/' .$outputFilePath ?? ''
     ];
+}
+
+// Example token generation function
+function generateToken() {
+    return bin2hex(random_bytes(16));
+}
+
+function getBearerToken() {
+    $headers = null;
+
+    // Check for Apache or FastCGI headers
+    if (isset($_SERVER['Authorization'])) {
+        $headers = trim($_SERVER["Authorization"]);
+    } elseif (isset($_SERVER['HTTP_AUTHORIZATION'])) { // Nginx or FastCGI
+        $headers = trim($_SERVER["HTTP_AUTHORIZATION"]);
+    } elseif (function_exists('apache_request_headers')) {
+        $requestHeaders = apache_request_headers();
+        // Get the Authorization header from the apache headers
+        if (isset($requestHeaders['Authorization'])) {
+            $headers = trim($requestHeaders['Authorization']);
+        }
+    }
+
+    // Bearer token starts with "Bearer "
+    if (!empty($headers)) {
+        if (preg_match('/Bearer\s(\S+)/', $headers, $matches)) {
+            return $matches[1];
+        }
+    }
+    return null;
 }
 
 function handleEndpointTrue($inputData, $inputType, $sharedSecret, $uniqueId, $conn, $isEncrypt = false) {
@@ -165,28 +243,59 @@ function handleEndpointTrue($inputData, $inputType, $sharedSecret, $uniqueId, $c
         http_response_code(400);
         return ['success' => false, 'message' => 'Unique ID is required.'];
     }
-    $inputType = 'text';
 
+    // var_dump($inputType);
     if ($inputType === 'text') {
-        
         $sql = "SELECT * FROM xfiles WHERE unique_id = '$uniqueId'";
         $result = $conn->query($sql);
         $row = $result->fetch_assoc();
         
         if ($uniqueId !== $row['unique_id']) {
-                return ['success' => false, 'message' => 'Unique ID provided does not match the one associated with the file.'];
+            return ['success' => false, 'message' => 'Unique ID provided does not match the one associated with the file.'];
         } else if($sharedSecret !== $row['shared_secret']) {
             return ['success' => false, 'message' => 'Shared Secret Not Same, You Put Wrong Key'];
-        }else{
-
+        } else {
             $hasilpure = $row['values_data'];
             $result_hasil = eccEncryptDecrypt($hasilpure, $sharedSecret, $isEncrypt);
 
             return [
                 'success' => true,
                 'message' => 'Decrypt.',
-                'output' => $isEncrypt,
-                'result' => $result_hasil
+                'output' => $result_hasil,
+                'result' => json_decode($result_hasil)
+            ];
+        }
+
+    } else if ($inputType === 'file') {
+        $sql = "SELECT * FROM xfiles WHERE unique_id = '$uniqueId'";
+        $result = $conn->query($sql);
+        $row = $result->fetch_assoc();
+
+        $filename = $row["file_name"];
+
+        $pathInfo = pathinfo($filename);
+        $newFilename = $pathInfo['filename'].'.'.$pathInfo['extension'].'.nathan';
+        $filePath = 'https://encrypt-decrypt.test/api/encrypt/'.$newFilename;
+        
+        $filename = str_replace(' ', '', $filename); // Remove spaces
+
+        $filename = preg_replace('/\s+/', '', $filename);
+        $outputFilePath = 'decrypt/'. $filename;
+
+        $processResult = processFilePure($filePath, $sharedSecret, $outputFilePath, $isEncrypt);
+        if (!$processResult) {
+            return [
+                'success' => false, 
+                'message' => 'Error processing file.',
+            ];
+        } else {
+
+            return [
+                'success' => true,
+                'message' => 'Data ' . urlencode($isEncrypt ? 'encrypted' : 'decrypted') . ' successfully!',
+                'output' => $outputFilePath,
+                'text' => $processResult ?? '',
+                'file' => 'https://encrypt-decrypt.test/api/' .$outputFilePath ?? ''
             ];
         }
     } else {
@@ -210,9 +319,9 @@ function generateUuid() {
 // Handle incoming API requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
-
     $sharedSecret = $_POST['shared_secret'] ?? '';
     $uniqueId = $_POST['uniqueid'] ?? '';
+    // $idUser = $_POST['id_user'] ?? '';
 
     if ($action === 'encrypt' || $action === 'decrypt') {
         $isEncrypt = $action === 'encrypt';
@@ -229,14 +338,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $result = handleEndpoint($inputData, $inputType, $sharedSecret, $uniqueId, $conn, $isEncrypt);
-        echo json_encode($result);
-    }else if($action === 'decryptpure') {
-        $inputData = $_POST['action'];
-        $inputType = 'text';
+        echo $prettyJson = json_encode($result, JSON_PRETTY_PRINT);
+
+    } else if ($action === 'decryptpure') {
+
+        if ($_POST['type'] === 'text') {
+            $inputData = 'text';
+            $inputType = 'text';
+        }else if ($_POST['type'] === 'file') {
+            $inputData = 'file';
+            $inputType = 'file';
+        } else {
+            die(json_encode(['success' => false, 'message' => 'Invalid input: No file or text provided.']));
+        }
 
         $result = handleEndpointTrue($inputData, $inputType, $sharedSecret, $uniqueId, $conn);
         echo json_encode($result);
-    }else {
+        exit();
+    } else {
         echo json_encode(['success' => false, 'message' => 'Invalid action.']);
     }
 } else {
