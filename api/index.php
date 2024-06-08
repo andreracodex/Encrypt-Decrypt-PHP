@@ -174,7 +174,10 @@ function handleEndpoint($inputData, $inputType, $sharedSecret, $uniqueId, $conn,
         $outputFilePath = 'String.txt';
         $resultData = eccEncryptDecrypt($inputData, $sharedSecret, $isEncrypt);
         if (!$resultData) {
-            return ['success' => false, 'message' => 'Error processing text input.'];
+            return [
+                'success' => false, 
+                'message' => 'Error processing text input.'
+            ];
         }
     } else {
         http_response_code(400);
@@ -189,8 +192,8 @@ function handleEndpoint($inputData, $inputType, $sharedSecret, $uniqueId, $conn,
     } else {
         $sql = "SELECT * FROM xfiles WHERE unique_id = '$uniqueId'";
         $result = $conn->query($sql);
-
         if ($result && $row = $result->fetch_assoc()) {
+            $uuid = $row['uuid'];
             if ($uniqueId !== $row['unique_id']) {
                 return ['success' => false, 'message' => 'Unique ID provided does not match the one associated with the file.'];
             }
@@ -201,6 +204,7 @@ function handleEndpoint($inputData, $inputType, $sharedSecret, $uniqueId, $conn,
 
     return [
         'success' => true,
+        'uuid' => $uuid,
         'message' => 'Data ' . urlencode($isEncrypt ? 'encrypted' : 'decrypted') . ' successfully!',
         'output' => $outputFilePath,
         'text' => $resultData ?? '',
@@ -272,6 +276,7 @@ function handleEndpointTrue($inputData, $inputType, $sharedSecret, $uniqueId, $c
         $row = $result->fetch_assoc();
 
         $filename = $row["file_name"];
+        $uuid = $row["uuid"];
 
         $pathInfo = pathinfo($filename);
         $newFilename = $pathInfo['filename'].'.'.$pathInfo['extension'].'.nathan';
@@ -291,6 +296,7 @@ function handleEndpointTrue($inputData, $inputType, $sharedSecret, $uniqueId, $c
         } else {
 
             return [
+                'uuid' => $uuid,
                 'success' => true,
                 'message' => 'Data ' . urlencode($isEncrypt ? 'encrypted' : 'decrypted') . ' successfully!',
                 'output' => $outputFilePath,
